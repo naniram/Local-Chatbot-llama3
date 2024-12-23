@@ -1,60 +1,86 @@
 import streamlit as st
-from langchain.llms import Ollama
-from langchain.callbacks.manager import CallbackManager
-from langchain.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+from langchain_community.llms import Ollama
+from langchain.memory import ConversationBufferMemory
+from langchain.chains import ConversationChain
+from langchain.prompts import PromptTemplate
 
-# Initialize Ollama
-llm = Ollama(model="llama3", 
-             callback_manager=CallbackManager([StreamingStdOutCallbackHandler()]))
+# Custom prompt template to incorporate memory and context
+CUSTOM_PROMPT = PromptTemplate(
+    input_variables=["history", "input"], 
+    template="""You are a helpful AI assistant. 
+Previous conversation:
+{history}
 
-def initialize_chat():
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+Current conversation:
+Human: {input}
+Assistant:"""
+)
 
-def generate_response(user_input):
-    # Construct the full context from the message history
-    context = "\n".join([f"{m['role']}: {m['content']}" for m in st.session_state.messages])
+def initialize_session_state():
+    """Initialize Streamlit session state variables."""
+    if 'chat_history' not in st.session_state:
+        st.session_state['chat_history'] = []
     
-    # Add the new user input
-    prompt = f"{context}\nHuman: {user_input}\nAssistant:"
+    if 'memory' not in st.session_state:
+        st.session_state['memory'] = ConversationBufferMemory(return_messages=True)
 
-    # Generate response using Ollama via langchain
-    response = llm(prompt)
+def get_llm_response(user_input):
+    """Generate response from local Llama model."""
+    # Initialize Ollama with Llama 3.2 model
+    llm = Ollama(model="llama3.2")
     
-    return response.strip()
+    # Create conversation chain with memory
+    conversation = ConversationChain(
+        llm=llm,
+        memory=st.session_state['memory'],
+        prompt=CUSTOM_PROMPT,
+        verbose=True
+    )
+    
+    # Get response
+    response = conversation.predict(input=user_input)
+    
+    return response
 
 def main():
-    st.title("Contextual Chatbot with Llama 3")
-
-    initialize_chat()
-
-    # Display chat messages from history
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    # Accept user input
-    if prompt := st.chat_input("What's on your mind?"):
-        # Add user message to chat history
-        st.session_state.messages.append({"role": "human", "content": prompt})
-        # Display user message in chat message container
-        with st.chat_message("human"):
-            st.markdown(prompt)
-
-        # Generate and display assistant response
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            with st.spinner("Thinking..."):
-                assistant_response = generate_response(prompt)
-            message_placeholder.markdown(assistant_response)
+    st.title("🤖 Local Llama 3.2 Chatbot")
+    
+    # Initialize session state
+    initialize_session_state()
+    
+    # Chat input
+    user_input = st.chat_input("Enter your message:")
+    
+    # Display chat history
+    for message in st.session_state['chat_history']:
+        if message['role'] == 'human':
+            st.chat_message('human').write(message['content'])
+        else:
+            st.chat_message('assistant').write(message['content'])
+    
+    # Process new message
+    if user_input:
+        # Display user message
+        st.chat_message('human').write(user_input)
         
-        # Add assistant response to chat history
-        st.session_state.messages.append({"role": "assistant", "content": assistant_response})
-
-    # Add a button to clear the chat history
-    if st.button("Clear Chat"):
-        st.session_state.messages = []
-        st.experimental_rerun()
+        # Get AI response
+        response = get_llm_response(user_input)
+        
+        # Display AI response
+        st.chat_message('assistant').write(response)
+        
+        # Update chat history
+        st.session_state['chat_history'].append({
+            'role': 'human', 
+            'content': user_input
+        })
+        st.session_state['chat_history'].append({
+            'role': 'assistant', 
+            'content': response
+        })
+        
+        # Rerun to update the chat interface
+        st.rerun()
 
 if __name__ == "__main__":
     main()
